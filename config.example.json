@@ -1,0 +1,9 @@
+{
+  "token": "PASTE_YOUR_DISCORD_USER_TOKEN_HERE",
+  "channel_id": null,
+  "locale": "en-US",
+  "speed": 1.0,
+  "auto_claim": true,
+  "user_agent": null,
+  "super_properties": null
+}
