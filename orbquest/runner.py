@@ -10,11 +10,16 @@ from . import ui
 from .api import DiscordQuestAPI, QuestAPIError
 from .quests import Quest, TaskInfo
 
-# Discord's own web player reports a video timestamp roughly every 7-10s. We go
-# a bit faster but keep it jittered so it is not a perfectly fixed cadence.
+# Discord's own web player reports a video timestamp roughly every 7-10s. By
+# default we go a bit faster but keep it jittered so it is not a fixed cadence.
 VIDEO_STEP_RANGE = (3.5, 4.75)
 # Heartbeats for play/stream/activity are accepted on a ~20-30s cadence.
 HEARTBEAT_INTERVAL_RANGE = (20.0, 24.0)
+
+# Stealth mode mirrors the real client's cadence exactly instead of rushing.
+STEALTH_VIDEO_STEP_RANGE = (7.0, 10.0)
+STEALTH_HEARTBEAT_INTERVAL_RANGE = (27.0, 32.0)
+
 MAX_FAILURES = 5
 # Safety cap so a stuck quest can never loop forever (25 min like the refs).
 MAX_RUNTIME_SECONDS = 25 * 60
@@ -36,12 +41,19 @@ class QuestRunner:
         speed: float = 1.0,
         auto_claim: bool = True,
         dry_run: bool = False,
+        stealth: bool = False,
     ) -> None:
         self.api = api
         self.channel_id = channel_id
-        self.speed = max(0.1, speed)
+        # In stealth mode we never speed up -- realistic timing is the point.
+        self.speed = 1.0 if stealth else max(0.1, speed)
         self.auto_claim = auto_claim
         self.dry_run = dry_run
+        self.stealth = stealth
+        self.video_step = STEALTH_VIDEO_STEP_RANGE if stealth else VIDEO_STEP_RANGE
+        self.heartbeat_interval = (
+            STEALTH_HEARTBEAT_INTERVAL_RANGE if stealth else HEARTBEAT_INTERVAL_RANGE
+        )
 
     def _sleep(self, low: float, high: float) -> None:
         if self.dry_run:
@@ -51,8 +63,9 @@ class QuestRunner:
     def _stream_key(self, quest: Quest) -> str:
         # A real voice/DM channel id is preferred; when we do not have one the
         # quest id works as a stand-in (matches the browser extension fallback).
+        # The trailing session counter is randomised so it is not always ':1'.
         base = self.channel_id or quest.id
-        return f"call:{base}:1"
+        return f"call:{base}:{random.randint(1, 9999)}"
 
     def run(self, quest: Quest) -> RunResult:
         task = quest.task()
@@ -94,8 +107,8 @@ class QuestRunner:
         ui.log(f"Watching '{quest.name}' -> {ui.progress_bar(cur, task.target)}", "info")
 
         while cur < task.target:
-            self._sleep(*VIDEO_STEP_RANGE)
-            cur = min(task.target, cur + random.uniform(*VIDEO_STEP_RANGE) * self.speed)
+            self._sleep(*self.video_step)
+            cur = min(task.target, cur + random.uniform(*self.video_step) * self.speed)
             try:
                 resp = self.api.video_progress(quest.id, cur)
                 server = _server_progress(resp, task.key)
@@ -142,7 +155,7 @@ class QuestRunner:
                 break
             if time.monotonic() - started > MAX_RUNTIME_SECONDS:
                 return RunResult(quest.id, False, "timeout")
-            self._sleep(*HEARTBEAT_INTERVAL_RANGE)
+            self._sleep(*self.heartbeat_interval)
 
         try:
             self.api.heartbeat(quest.id, stream_key, terminal=True)

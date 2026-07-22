@@ -129,9 +129,36 @@ available directly, e.g. `orbquest list`.
 | `-c, --config PATH` | Path to a config file (default: `config.json` or `~/.config/orbquest/config.json`). |
 | `-t, --token TOKEN` | Discord user token. |
 | `--channel-id ID` | Real voice/DM channel id to use in heartbeat `stream_key` (optional). |
-| `--speed N` | Pacing multiplier (2 = twice as fast). Higher = more suspicious. |
+| `--speed N` | Pacing multiplier (2 = twice as fast). Higher = more suspicious. Ignored in `--stealth`. |
 | `--no-claim` | Complete quests but leave rewards unclaimed. |
+| `--api-base URL` | Override the API base URL (used by the test suite's mock server). |
 | `--dry-run` | (`run`) Print the plan without sending progress. |
+
+---
+
+## Anti-detection
+
+The point of these features is to make traffic look like a **real desktop
+client** instead of a burst of identical scripted calls. None of them make bans
+impossible — see the ToS warning — they only reduce the most obvious tells.
+
+| Feature | Flag / config | What it does |
+|---|---|---|
+| **Stealth mode** | `--stealth` / `"stealth": true` | Matches Discord's real cadence (video ~7–10s, heartbeat ~27–32s), forces `speed=1`, and turns on idle gaps. Recommended. |
+| **Randomized pacing** | always on | Every delay and progress increment is jittered, never a fixed interval. |
+| **Idle between quests** | `--idle MIN MAX` / `"idle_between_quests"` | Random pause between finishing one quest and starting the next. |
+| **Warmup delay** | `--warmup MIN MAX` / `"warmup_delay"` | Random pause before the first request, so runs don't start instantly. |
+| **Quest-order shuffle** | on by default (`--no-shuffle` to disable) | Completes quests in a random order each run. |
+| **Realistic client fingerprint** | automatic | Sends desktop `X-Super-Properties` (with a rotated, plausible build number), matching `User-Agent`, `Accept-Language`, `X-Discord-Locale`, `X-Discord-Timezone`, and `X-Debug-Options` headers. Override via `user_agent` / `super_properties` / `timezone` / `locale` in config. |
+| **Randomized stream keys** | automatic | The heartbeat `stream_key` session id is randomized rather than always `:1`. |
+| **Rate-limit backoff** | automatic | Honours Discord's `429` `retry_after` / `Retry-After` (with jitter) instead of hammering. |
+| **Proxy support** | `--proxy URL` / `"proxy"` | Route all traffic through an HTTP/HTTPS/SOCKS proxy to rotate IPs. |
+
+Recommended everyday invocation:
+
+```bash
+python -m orbquest --stealth run
+```
 
 ---
 
@@ -142,15 +169,23 @@ available directly, e.g. `orbquest list`.
   "token": "your_token",
   "channel_id": null,
   "locale": "en-US",
+  "timezone": "America/New_York",
   "speed": 1.0,
   "auto_claim": true,
   "user_agent": null,
-  "super_properties": null
+  "super_properties": null,
+
+  "stealth": true,
+  "proxy": null,
+  "shuffle": true,
+  "idle_between_quests": [5, 20],
+  "warmup_delay": [3, 10]
 }
 ```
 
 Leave `user_agent`/`super_properties` as `null` to use the built-in desktop
-defaults, or override them with your own values.
+defaults, or override them with your own values. CLI flags always win over the
+config file, which wins over the `DISCORD_TOKEN` env var.
 
 ---
 
@@ -162,8 +197,17 @@ ruff check .
 pytest
 ```
 
-The tests are fully offline — they use a fake in-memory API, so no token or
-network access is required.
+The tests are fully offline and need no token. They include:
+
+- **unit tests** — task detection, super-properties encoding, quest state,
+  runner loops (against a fake in-memory API); and
+- **end-to-end tests** — the real CLI run against an in-process **mock Discord
+  server** (`tests/mock_discord.py`) that implements the quest endpoints. These
+  verify the full enroll → progress → claim flow, that the anti-detection
+  fingerprint headers are actually sent, that a `429` is retried, and that
+  `--dry-run` sends no state-changing calls.
+
+CI (`.github/workflows/ci.yml`) runs lint + tests on Python 3.9 / 3.11 / 3.12.
 
 ---
 

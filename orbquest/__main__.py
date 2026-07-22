@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import random
 import sys
+import time
 
 from . import __version__, ui
 from .api import DiscordQuestAPI, QuestAPIError
@@ -23,6 +25,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--channel-id", help="Voice/DM channel id used for heartbeats.")
     parser.add_argument("--speed", type=float, help="Speed multiplier for progress pacing.")
     parser.add_argument("--no-claim", action="store_true", help="Do not auto-claim rewards.")
+    parser.add_argument("--api-base", help="Override the API base URL (for testing).")
+    parser.add_argument("--proxy", help="HTTP/HTTPS/SOCKS proxy URL for all requests.")
+
+    stealth = parser.add_argument_group("anti-detection")
+    stealth.add_argument("--stealth", action="store_true",
+                         help="Client-matched pacing + idle gaps (recommended, forces speed 1).")
+    stealth.add_argument("--idle", nargs=2, type=float, metavar=("MIN", "MAX"),
+                         help="Random idle seconds between quests.")
+    stealth.add_argument("--warmup", nargs=2, type=float, metavar=("MIN", "MAX"),
+                         help="Random delay (seconds) before the first action.")
+    stealth.add_argument("--no-shuffle", action="store_true",
+                         help="Do not randomise quest order.")
 
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("list", help="List quests offered to the account.")
@@ -40,6 +54,9 @@ def _make_api(cfg: Config) -> DiscordQuestAPI:
         super_properties=cfg.super_properties,
         user_agent=cfg.user_agent,
         locale=cfg.locale,
+        timezone=cfg.timezone,
+        api_base=cfg.api_base,
+        proxy=cfg.proxy,
     )
 
 
@@ -91,19 +108,35 @@ def cmd_run(api: DiscordQuestAPI, cfg: Config, quest_ids: list[str], dry_run: bo
         ui.log("Nothing to run (no runnable quests).", "warn")
         return 0
 
+    if cfg.shuffle and not quest_ids:
+        random.shuffle(targets)
+
+    if cfg.stealth:
+        ui.log("Stealth mode: client-matched pacing, idle gaps, shuffled order.", "info")
+
     runner = QuestRunner(
         api,
         channel_id=cfg.channel_id,
         speed=cfg.speed,
         auto_claim=cfg.auto_claim,
         dry_run=dry_run,
+        stealth=cfg.stealth,
     )
 
+    if not dry_run and cfg.warmup_max > 0:
+        delay = random.uniform(cfg.warmup_min, cfg.warmup_max)
+        ui.log(f"Warming up for {delay:.0f}s before starting...", "dim")
+        time.sleep(delay)
+
     completed = 0
-    for quest in targets:
+    for index, quest in enumerate(targets):
         if quest.completed:
             ui.log(f"'{quest.name}' already completed; skipping.", "dim")
             continue
+        if not dry_run and index > 0 and cfg.idle_max > 0:
+            gap = random.uniform(cfg.idle_min, cfg.idle_max)
+            ui.log(f"Idling {gap:.0f}s before next quest...", "dim")
+            time.sleep(gap)
         try:
             result = runner.run(quest)
         except QuestAPIError as exc:
@@ -131,6 +164,12 @@ def main(argv: list[str] | None = None) -> int:
         channel_id=args.channel_id,
         speed=args.speed,
         no_claim=args.no_claim,
+        stealth=args.stealth,
+        proxy=args.proxy,
+        api_base=args.api_base,
+        idle=tuple(args.idle) if args.idle else None,
+        warmup=tuple(args.warmup) if args.warmup else None,
+        no_shuffle=args.no_shuffle,
     )
 
     if not cfg.token:

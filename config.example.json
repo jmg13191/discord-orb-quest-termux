@@ -2,8 +2,15 @@
   "token": "PASTE_YOUR_DISCORD_USER_TOKEN_HERE",
   "channel_id": null,
   "locale": "en-US",
+  "timezone": "America/New_York",
   "speed": 1.0,
   "auto_claim": true,
   "user_agent": null,
-  "super_properties": null
+  "super_properties": null,
+
+  "stealth": true,
+  "proxy": null,
+  "shuffle": true,
+  "idle_between_quests": [5, 20],
+  "warmup_delay": [3, 10]
 }
